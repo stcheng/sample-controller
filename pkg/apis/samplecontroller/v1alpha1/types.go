@@ -52,3 +52,33 @@ type FooList struct {
 
 	Items []Foo `json:"items"`
 }
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// Bar is a specification for a Bar resource
+type Bar struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   BarSpec   `json:"spec"`
+	Status BarStatus `json:"status"`
+}
+
+type BarSpec struct {
+	DeploymentName string `json:"deploymentName"`
+	Replicas       *int32 `json:"replicas"`
+}
+
+type BarStatus struct {
+	AvailableReplicas int32 `json:"availableReplicas"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type BarList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata"`
+
+	Items []Bar `json:"items"`
+}

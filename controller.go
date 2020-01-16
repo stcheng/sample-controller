@@ -71,6 +71,8 @@ type Controller struct {
 	deploymentsSynced cache.InformerSynced
 	foosLister        listers.FooLister
 	foosSynced        cache.InformerSynced
+	barsLister        listers.BarLister
+	barsSyncd         cache.InformerSynced
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -88,7 +90,8 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	sampleclientset clientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
-	fooInformer informers.FooInformer) *Controller {
+	fooInformer informers.FooInformer,
+	barInformer informers.BarInformer) *Controller {
 
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
@@ -107,6 +110,8 @@ func NewController(
 		deploymentsSynced: deploymentInformer.Informer().HasSynced,
 		foosLister:        fooInformer.Lister(),
 		foosSynced:        fooInformer.Informer().HasSynced,
+		barsLister:        barInformer.Lister(),
+		barsSyncd:         barInformer.Informer().HasSynced,
 		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Foos"),
 		recorder:          recorder,
 	}
@@ -119,6 +124,7 @@ func NewController(
 			controller.enqueueFoo(new)
 		},
 	})
+
 	// Set up an event handler for when Deployment resources change. This
 	// handler will lookup the owner of the given Deployment, and if it is
 	// owned by a Foo resource will enqueue that Foo resource for
@@ -240,12 +246,19 @@ func (c *Controller) processNextWorkItem() bool {
 // converge the two. It then updates the Status block of the Foo resource
 // with the current status of the resource.
 func (c *Controller) syncHandler(key string) error {
+
+	klog.Infof("start sync handler")
+
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
 		return nil
 	}
+
+	klog.Infof("get namespace:%s name:/%s", namespace, name)
+
+	klog.Infof("get foo resource")
 
 	// Get the Foo resource with this namespace/name
 	foo, err := c.foosLister.Foos(namespace).Get(name)
@@ -260,6 +273,8 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
+	// use sample client set to create Bar
+
 	deploymentName := foo.Spec.DeploymentName
 	if deploymentName == "" {
 		// We choose to absorb the error here as the worker would requeue the
@@ -269,11 +284,16 @@ func (c *Controller) syncHandler(key string) error {
 		return nil
 	}
 
+	klog.Infof("get foo deployment:%s", deploymentName)
+
 	// Get the deployment with the name specified in Foo.spec
 	deployment, err := c.deploymentsLister.Deployments(foo.Namespace).Get(deploymentName)
 	// If the resource doesn't exist, we'll create it
 	if errors.IsNotFound(err) {
-		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Create(newDeployment(foo))
+
+		klog.Infof("create deployment?")
+
+		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Create(newDeploymentFoo(foo))
 	}
 
 	// If an error occurs during Get/Create, we'll requeue the item so we can
@@ -296,7 +316,7 @@ func (c *Controller) syncHandler(key string) error {
 	// should update the Deployment resource.
 	if foo.Spec.Replicas != nil && *foo.Spec.Replicas != *deployment.Spec.Replicas {
 		klog.V(4).Infof("Foo %s replicas: %d, deployment replicas: %d", name, *foo.Spec.Replicas, *deployment.Spec.Replicas)
-		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Update(newDeployment(foo))
+		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Update(newDeploymentFoo(foo))
 	}
 
 	// If an error occurs during Update, we'll requeue the item so we can
@@ -305,6 +325,8 @@ func (c *Controller) syncHandler(key string) error {
 	if err != nil {
 		return err
 	}
+
+	klog.Infof("update foo status")
 
 	// Finally, we update the status block of the Foo resource to reflect the
 	// current state of the world
@@ -384,10 +406,10 @@ func (c *Controller) handleObject(obj interface{}) {
 	}
 }
 
-// newDeployment creates a new Deployment for a Foo resource. It also sets
+// newDeploymentFoo creates a new Deployment for a Foo resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the Foo resource that 'owns' it.
-func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
+func newDeploymentFoo(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 	labels := map[string]string{
 		"app":        "nginx",
 		"controller": foo.Name,
@@ -402,6 +424,41 @@ func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: foo.Spec.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "nginx",
+							Image: "nginx:latest",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func newDeploymentBar(bar *samplev1alpha1.Bar) *appsv1.Deployment {
+	labels := map[string]string{
+		"app":        "nginx",
+		"controller": bar.Name,
+	}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bar.Spec.DeploymentName,
+			Namespace: bar.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(bar, samplev1alpha1.SchemeGroupVersion.WithKind("Bar")),
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: bar.Spec.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},

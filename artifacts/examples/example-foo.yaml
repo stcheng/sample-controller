@@ -3,5 +3,5 @@ kind: Foo
 metadata:
   name: example-foo
 spec:
-  deploymentName: example-foo
+  deploymentName: bar
   replicas: 1
