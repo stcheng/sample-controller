@@ -36,6 +36,7 @@ type Foo struct {
 type FooSpec struct {
 	DeploymentName string `json:"deploymentName"`
 	Replicas       *int32 `json:"replicas"`
+	BarName        string `json:"barName"`
 }
 
 // FooStatus is the status for a Foo resource
